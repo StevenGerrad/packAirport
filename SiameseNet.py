@@ -110,7 +110,7 @@ class ContrastiveLoss(torch.nn.Module):
         return loss_contrastive
 
 class SiameseNetworkDataset():
-    __epoch_size__ = 200
+    __epoch_size__ = 20
 
     def __init__(self,transform=None,should_invert=False):
         self.imageFolderDataset = []

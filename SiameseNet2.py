@@ -81,7 +81,7 @@ class MyDataset(Dataset):
             line = linecache.getline(self.txt, random.randint(1, self.__len__()))
             line.strip('\n')
             img0_list= line.split()
-            should_get_same_class = random.randint(0,1) 
+            should_get_same_class = random.randint(0,1)
             if should_get_same_class:
                   while True:
                         img1_list = linecache.getline(self.txt, random.randint(1, self.__len__())).strip('\n').split()

@@ -23,28 +23,45 @@ import cv2
 from sklearn import linear_model
 import matplotlib.pyplot as plt
 import math
+import copy
+
+from torchvision import transforms as tfs
+
+im_aug = tfs.Compose([
+    tfs.Resize(200),
+    tfs.RandomHorizontalFlip(),
+    tfs.RandomCrop(96)
+])
 
 class dataMaker():
     def __init__(self, file_dir, name='AR', use_num=None):
         if name == 'AR':
-            self.AR_dataSet(file_dir)
             if use_num == None:
                 self.num_class = 100
             else:
                 self.num_class = use_num
-            
             self.train_item = 14
             self.test_item = 12
-
+            self.AR_dataSet(file_dir)
         elif name == 'YaleB':
-            self.YaleB_dataSet(file_dir)
             if use_num == None:
                 self.num_class = 39
             else:
                 self.num_class = use_num
-            
             self.train_item = 1
             self.test_item = 1
+            self.YaleB_dataSet(file_dir)
+        elif name == 'classed_pack':
+            if use_num == None:
+                self.num_class = 10
+            else:
+                self.num_class = use_num
+                # 每类图片有三张(三个摄像头)取两个做训练集，一个做测试集
+            self.train_item = 2
+            self.test_item = 1
+
+            self.classed_pack_dataset(file_dir)
+            
     
     def AR_dataSet(self, file_dir):
         ''' 提取文件夹下的地址+文件名，源文件设定排序规则 '''
@@ -74,11 +91,11 @@ class dataMaker():
         
         self.train_data = train_data        # 14*100
         self.test_data = test_data  # 12*100
-    
 
     def YaleB_dataSet(self, file_dir):
         '''
         读取YaleB数据集, 同时作为训练集和测试集
+        TODO：好吧实际上YaleB数据集每类只有一张图片所以在SRC算法中无用
         '''
         src_img_w = 192
         src_img_h = 168
@@ -101,6 +118,36 @@ class dataMaker():
                 self.train_data.append(gray_img)
                 self.test_data.append(gray_img)
         print('...prepare train data finished')
+
+
+    def classed_pack_dataset(self, file_dir):
+        '''
+        大创行李数据集，该数据集为'三个轨道的图像分别有两个做训练集，剩下的一个做测试集'
+        TODO：考虑使用transforms
+        '''
+        # TODO：预定义哪个做测试集
+        test_class = [3,]
+
+        self.train_data = []
+        self.test_data = []
+
+        # 根据传入行李类别数判断读取.jpg文件
+        for i in range(1, self.num_class + 1):
+            temp = []
+            sub_floder = file_dir + str(i) + '/'
+            # 每件行李有三张图片
+            for j in range(1, self.train_item + self.test_item + 1):
+                # temp.append(sub_floder + str(j) + '.jpg')
+                img_dir = sub_floder + str(j) + '.jpg'
+                # TODO：直接以灰度图方式读出
+                img = cv2.imread(img_dir, cv2.IMREAD_GRAYSCALE)
+                if j in test_class:
+                    self.test_data.append(img)
+                else:
+                    self.train_data.append(img)
+        
+        print('...prepare train data finished')
+                
 
 
 class SRC():
@@ -180,6 +227,27 @@ class SRC():
         l2[l2==0] = 1
         return x/l2
 
+    def dict_update(self, y, d, x, n_components):
+        """
+        使用KSVD更新字典的过程
+        """
+        for i in range(n_components):
+            index = np.nonzero(x[i, :])[0]
+            if len(index) == 0:
+                continue
+            # 更新第i列
+            d[:, i] = 0
+            # 计算误差矩阵
+            r = (y - np.dot(d, x))[:, index]
+            # 利用svd的方法，来求解更新字典和稀疏系数矩阵
+            u, s, v = np.linalg.svd(r, full_matrices=False)
+            # 使用左奇异矩阵的第0列更新字典
+            d[:, i] = u[:, 0]
+            # 使用第0个奇异值和右奇异矩阵的第0行的乘积更新稀疏系数矩阵
+            for j,k in enumerate(index):
+                x[i, k] = s[0] * v[0, j]
+        return d, x
+
     def OMP(self, y):
         '''
         2.用OMP算法计算该测试数据的稀疏表达x；
@@ -190,39 +258,64 @@ class SRC():
         # _, figs = plt.subplots(nrows, ncols, figsize=figsize)
         # l = []
 
-        # 共self.num_class类，每类图片测试集有12张图片
+        # 共self.num_class类，每类图片测试集有...张图片
         for i in range(self.test_item):
-            yy = y[:, i * self.div_num: (i + 1) * self.div_num]
-            xx = linear_model.orthogonal_mp(self.dictionary, yy, n_nonzero_coefs=self.n_nonzero_coefs)
+            yy = y[:, i * self.div_num : (i + 1) * self.div_num]
+            
+            # 求解稀疏表达 ATTENTION: 这个写错了
+            n_comp = self.num_class * self.train_item * self.div_num
+            # max_iter = 10
+            dic = copy.deepcopy(self.dictionary)
+
+            for j in range(self.max_iter):
+                # 稀疏编码
+                x = linear_model.orthogonal_mp(dic, y)
+                if len(x.shape) == 1:
+                    x = x[:, np.newaxis]
+                e = np.linalg.norm(y - np.dot(dic, x))
+                print('dict_update->e:',e)
+                if e < self.tol:
+                    break
+                dic, temp_x = self.dict_update(y, dic, x, n_comp)
+                print('dict_update->dic.e:', np.linalg.norm(self.dictionary - dic))
+                # print(x.transpose())
+                # print(temp_x.transpose())
+
+            xx = linear_model.orthogonal_mp(dic, yy)
+            # xx = linear_model.orthogonal_mp(self.dictionary, yy)
             if len(xx.shape) == 1:
                 xx = xx[:, np.newaxis]
 
+            print(xx.transpose())
             # _, figs1 = plt.subplots(5, 5, figsize=figsize)
             for i in range(0, self.div_num):
                 # TODO: 原来xx[]为0时log为-inf
-                # t_y = np.log(xx[:,i])
-                t_y = xx[:,i]
+                xx[xx==0] = self.tol
+                t_y = np.log(xx[:,i])
+                # t_y = xx[:,i]
                 # t_x = list(range(35000))
                 t_x = list(range(self.train_item*self.num_class*self.div_num))
                 # figs1[i][j].bar(t_x,t_y)
 
                 # 这个占用内存太大了似乎出不来啊
-                plt.bar(t_x, t_y)
+                plt.subplot(1, 4, 1), plt.imshow(self.divide.decode(yy, 50, 60))
+                plt.subplot(1, 4, 2), plt.bar(t_x, t_y)
+                plt.subplot(1, 4, 3), plt.imshow(self.divide.decode(self.dictionary[:, 15 * self.div_num : (15 + 1) * self.div_num], 50, 60))
+                plt.subplot(1, 4, 4), plt.imshow(self.divide.decode(np.dot(dic, x),50,60))
                 plt.show()
             # plt.show()
 
             l = []
             print("[OMP]->i:{}: ".format(i))
             for j in range(self.num_class):
-                # (1200, 14*16) * (14*16, 16)
-                # (120,1) -
+                # 取每类的字典部分和每类的稀疏表达部分计算误差
                 dd = self.dictionary[:, j * self.train_item * self.div_num : (j + 1) * self.train_item * self.div_num]
                 xxx = xx[j * self.train_item * self.div_num : (j + 1) * self.train_item * self.div_num, :]
                 e = np.linalg.norm(yy - np.dot(dd, xxx))
                 # print("[OMP]->i:{},j:{}->e:{}".format(i, j, e))
                 print("\tj:{}->e:{}".format(j, e),end='')
                 if e == 0.0:
-                    e += 1e-6
+                    e = self.tol
                 l.append(math.log(e))
             print()
 
@@ -240,7 +333,7 @@ class SRC():
         # 2.用OMP算法计算该测试数据的稀疏表达x；
         for i in range(self.num_class):
             self.OMP(self.test_img[:, i * self.div_num * self.test_item : (i + 1) * self.div_num * self.test_item])
-        print('size dic:{},test:{}'.format(self.dictionary.size(), self.test_img.size()))
+        print('size dic:{},test:{}'.format(self.dictionary.shape, self.test_img.shape))
         # 3.使用类似one-hot方法对x进行处理。
         # 4.应用字典将处理后的稀疏表达还原，并计算原后的向量和图像原始特征向量的距离
         # train: 100类*14张*16块*1200 test: 100*12*16*1200
@@ -293,7 +386,8 @@ if __name__ == '__main__':
     #   并将无遮挡的人脸作为训练数据，有遮挡的人脸作为测试数据。
 
     # dataset = dataMaker('D:\\MINE_FILE\\dataSet\\AR', 'AR', use_num=40)
-    dataset = dataMaker('D:\\MINE_FILE\\dataSet\\YaleB', 'YaleB')
+    # dataset = dataMaker('D:\\MINE_FILE\\dataSet\\YaleB', 'YaleB')
+    dataset = dataMaker('./image/classed_pack/', 'classed_pack')
     
     # 2.应用SCR算法进行字典构建并对测试集进行基于分块投票的分类；
     src_algorithm = SRC(dataset, max_iter=100, tol=1e-5)

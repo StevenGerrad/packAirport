@@ -25,6 +25,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
+import os
+
 
 # 先对数据进行预处理
 
@@ -40,6 +42,8 @@ im_aug1 = tfs.Compose([
     tfs.ToTensor()
 ])
 
+image_width = 300
+image_height = 300
 
 class SiameseNetwork(nn.Module):
     def __init__(self):
@@ -71,7 +75,7 @@ class SiameseNetwork(nn.Module):
 
         self.fc1 = nn.Sequential(
             # nn.Linear(8*100*100, 500),
-            nn.Linear(8*128*128, 512),
+            nn.Linear(8*image_width*image_height, 512),
             nn.ReLU(inplace=True),
             nn.Linear(512, 512),
             nn.ReLU(inplace=True),
@@ -110,54 +114,77 @@ class ContrastiveLoss(torch.nn.Module):
         return loss_contrastive
 
 class SiameseNetworkDataset():
-    __epoch_size__ = 20
+    __set_size__ = 90
+    __batch_size__ = 10
 
-    def __init__(self,transform=None,should_invert=False):
+    def __init__(self,set_size=90,batch_size=10,transform=None,should_invert=False):
         self.imageFolderDataset = []
         self.train_dataloader = []
-        self.transform = transform
+
+        self.__set_size__ = set_size
+        self.__batch_size__ = batch_size
+
+        self.transform = tfs.Compose([
+                            tfs.Resize((image_width,image_height)),
+                            # tfs.RandomHorizontalFlip(),
+                            # tfs.RandomCrop(128),
+                            tfs.ToTensor()
+                        ])
         self.should_invert = should_invert
         
-    def __getitem__(self, class_num=40, item_num=10):
+    def __getitem__(self, class_num=40):
         '''
         如果图像来自同一个类，标签将为0，否则为1
+        TODO: 由于classed_pack 每类可能有2-3张, 此时参数item_num无效,故删去参数中的item_num
         '''
-        img0_class = random.randint(0,class_num-1)
-        #we need to make sure approx 50% of images are in the same class
+        data0 = torch.empty(0, 3, 300, 300)
+        data1 = torch.empty(0, 3, 300, 300)
+
         should_get_same_class = random.randint(0,1)
-        if should_get_same_class:
-            temp = random.sample(list(range(0,item_num)), 2)
-            img0_tuple = (self.imageFolderDataset[img0_class][temp[0]], img0_class)
-            img1_tuple = (self.imageFolderDataset[img0_class][temp[1]], img0_class)
-        else:
-            img1_class = random.randint(0, class_num - 1)
-            # 保证属于不同类别
-            while img1_class == img0_class:
+        for i in range(self.__batch_size__):
+            img0_class = random.randint(0,class_num-1)
+            #we need to make sure approx 50% of images are in the same class
+            
+            if should_get_same_class:
+                item_num = len(self.imageFolderDataset[img0_class])
+                temp = random.sample(list(range(0,item_num)), 2)
+                img0_tuple = (self.imageFolderDataset[img0_class][temp[0]], img0_class)
+                img1_tuple = (self.imageFolderDataset[img0_class][temp[1]], img0_class)
+            else:
                 img1_class = random.randint(0, class_num - 1)
-            img0_tuple = (self.imageFolderDataset[img0_class][random.randint(0,item_num-1)], img0_class)
-            img1_tuple = (self.imageFolderDataset[img1_class][random.randint(0,item_num-1)], img1_class)
+                # 保证属于不同类别
+                while img1_class == img0_class:
+                    img1_class = random.randint(0, class_num - 1)
+                item_num = len(self.imageFolderDataset[img0_class])
+                img0_tuple = (self.imageFolderDataset[img0_class][random.randint(0, item_num - 1)], img0_class)
+                item_num = len(self.imageFolderDataset[img1_class])
+                img1_tuple = (self.imageFolderDataset[img1_class][random.randint(0, item_num - 1)], img1_class)
 
-        img0 = Image.open(img0_tuple[0])
-        img1 = Image.open(img1_tuple[0])
-        # 用以指定一种色彩模式, "L"8位像素，黑白
-        # img0 = img0.convert("L")
-        # img1 = img1.convert("L")
+            img0 = Image.open(img0_tuple[0])
+            img1 = Image.open(img1_tuple[0])
+            # 用以指定一种色彩模式, "L"8位像素，黑白
+            # img0 = img0.convert("L")
+            # img1 = img1.convert("L")
 
-        # img0 = img0.resize((100,100),Image.BILINEAR)
-        # img1 = img1.resize((100,100),Image.BILINEAR)
+            # img0 = img0.resize((100,100),Image.BILINEAR)
+            # img1 = img1.resize((100,100),Image.BILINEAR)
 
-        if self.should_invert:
-            # 二值图像黑白反转
-            img0 = PIL.ImageOps.invert(img0)
-            img1 = PIL.ImageOps.invert(img1)
+            if self.should_invert:
+                # 二值图像黑白反转,默认不采用
+                img0 = PIL.ImageOps.invert(img0)
+                img1 = PIL.ImageOps.invert(img1)
 
-        # if self.transform is not None:
-        #     # 不知道是做什么用的
-        #     img0 = self.transform(img0)
-        #     img1 = self.transform(img1)
-        
-        # return img0, img1 , torch.from_numpy(np.array([int(img1_tuple[1]!=img0_tuple[1])],dtype=np.float32))
-        return img0, img1, should_get_same_class
+            if self.transform is not None:
+                img0 = self.transform(img0)
+                img1 = self.transform(img1)
+            
+            img0 = torch.unsqueeze(img0, dim=0).float()
+            img1 = torch.unsqueeze(img1, dim=0).float()
+
+            data0 = torch.cat((data0, img0), dim=0)
+            data1 = torch.cat((data1, img1), dim=0)
+
+        return data0, data1, should_get_same_class
 
     def att_face_data(self):
         ''' AT&T 数据集: 共40类, 每类十张图像 '''
@@ -170,23 +197,38 @@ class SiameseNetworkDataset():
                 temp.append(sub_floder + str(j) + '.pgm')
             self.imageFolderDataset.append(temp)
         # 为数据集添加数据
-        for i in range(self.__epoch_size__):
+        for i in range(self.__set_size__):
             img0, img1, label = self.__getitem__()
             self.train_dataloader.append((img0, img1, label))
             # print("\r" + 'Cnt: ' + str(i)  + '/' + str(self.__epoch_size__) + '[' +">>" * i + ']',end=' ')
 
     def classed_pack(self):
-        local = 'image/classed_pack/'
+        local = 'image/classed_pack/2019-03-14 22-19-img/'
+        local1 = 'image/classed_pack/2019-03-14 16-30-img/'
         self.imageFolderDataset = []
-        for i in range(1, 10 + 1):
+
+        # floader1
+        subFloader = os.listdir(local)
+        for i in subFloader:
             temp = []
-            sub_floder = local + str(i) + '/'
-            for j in range(1, 3 + 1):
-                temp.append(sub_floder + str(j) + '.jpg')
+            sub_dir = local + i + '/'
+            subsubFloader = os.listdir(sub_dir)
+            for j in subsubFloader:
+                temp.append(sub_dir + j)
             self.imageFolderDataset.append(temp)
+        # floader2
+        subFloader = os.listdir(local1)
+        for i in subFloader:
+            temp = []
+            sub_dir = local + i + '/'
+            subsubFloader = os.listdir(sub_dir)
+            for j in subsubFloader:
+                temp.append(sub_dir + j)
+            self.imageFolderDataset.append(temp)
+
         # 为数据集添加数据
-        for i in range(self.__epoch_size__):
-            img0, img1, label = self.__getitem__(10,3)
+        for i in range(self.__set_size__):
+            img0, img1, label = self.__getitem__(len(self.imageFolderDataset))
             self.train_dataloader.append((img0, img1, label))
     
 
@@ -195,9 +237,10 @@ def show_plot(x, y):
     plt.show()
 
 if __name__ == '__main__':
+
     # net = SiameseNetwork().cuda()
     print('start preparing the data...')
-    train_data = SiameseNetworkDataset()
+    train_data = SiameseNetworkDataset(set_size=80, batch_size=1)
     # train_data.att_face_data()
     train_data.classed_pack()
     print('finish preparing the data...')
@@ -208,30 +251,35 @@ if __name__ == '__main__':
     criterion = ContrastiveLoss()
     optimizer = optim.Adam(net.parameters(),lr = 0.0005 )
     
+    
     counter = []
     loss_history = []
     iteration_number= 0
     train_number_epochs = 100
 
-    for epoch in range(0,train_number_epochs):
+    for epoch in range(0, train_number_epochs):
+        # train
         for i, data in enumerate(train_data.train_dataloader):
             img0, img1, label = data
-            img0 = im_aug1(img0)
-            img1 = im_aug1(img1)
-            # img0 = torch.unsqueeze(img0, 0)
-            # img1 = torch.unsqueeze(img1, 0)
-            img0 = torch.unsqueeze(img0, dim=0).float()
-            img1 = torch.unsqueeze(img1, dim=0).float()
+            # img0 = im_aug1(img0)
+            # img1 = im_aug1(img1)
+
+            # img0 = torch.unsqueeze(img0, dim=0).float()
+            # img1 = torch.unsqueeze(img1, dim=0).float()
             # img0, img1 , label = Variable(img0).cuda(), Variable(img1).cuda() , Variable(label).cuda()
             output1,output2 = net(img0,img1)
             optimizer.zero_grad()
             loss_contrastive = criterion(output1,output2,label)
             loss_contrastive.backward()
+            # loss_contrastive.backward(torch.tensor([1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0]))
             optimizer.step()
-            if i%10 == 0 :
+            if i%2 == 0 :
                 print("Epoch: {} step: {} Current loss {}".format(epoch,i,loss_contrastive.data[0]))
                 iteration_number = 10
                 counter.append(iteration_number)
                 loss_history.append(loss_contrastive.data[0])
+        
+        # test
+
     # show_plot(counter,loss_history)
     show_plot(counter, loss_history)

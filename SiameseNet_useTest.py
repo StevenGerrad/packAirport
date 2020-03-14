@@ -51,11 +51,11 @@ class SiameseNetwork(nn.Module):
             nn.Dropout2d(p=.2),
             # 输出为 8 * 100 * 100
 
-            nn.ReflectionPad2d(1),
-            nn.Conv2d(8, 8, kernel_size=3),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(8),
-            nn.Dropout2d(p=.2),
+            # nn.ReflectionPad2d(1),
+            # nn.Conv2d(8, 8, kernel_size=3),
+            # nn.ReLU(inplace=True),
+            # nn.BatchNorm2d(8),
+            # nn.Dropout2d(p=.2),
 
             # 输出为 8 * 100 * 100
         )
@@ -121,7 +121,8 @@ class SiameseNetworkDataset():
         
     def __getitem__(self, class_num=40):
         '''
-        如果图像来自同一个类，标签将为1，否则为0
+        如果图像来自同一个类，标签将为0，否则为1
+        TODO: 实际上: Y值为1或0。如果模型预测输入是相似的，那么Y的值为0，否则Y为1。
         TODO: 由于classed_pack 每类可能有2-3张, 此时参数item_num无效,故删去参数中的item_num
         '''
         data0 = torch.empty(0, 3, image_width, image_height)
@@ -134,10 +135,9 @@ class SiameseNetworkDataset():
             
             if should_get_same_class:
                 item_num = len(self.imageFolderDataset[img0_class])
-                # temp = random.sample(list(range(0,item_num)), 2)
-                # 稍微改变策略，让其有可能与自身图片搭配
-                img0_tuple = (self.imageFolderDataset[img0_class][random.randint(0, item_num - 1)], img0_class)
-                img1_tuple = (self.imageFolderDataset[img0_class][random.randint(0, item_num - 1)], img0_class)
+                temp = random.sample(list(range(0,item_num)), 2)
+                img0_tuple = (self.imageFolderDataset[img0_class][temp[0]], img0_class)
+                img1_tuple = (self.imageFolderDataset[img0_class][temp[1]], img0_class)
             else:
                 img1_class = random.randint(0, class_num - 1)
                 # 保证属于不同类别
@@ -171,11 +171,9 @@ class SiameseNetworkDataset():
 
             data0 = torch.cat((data0, img0), dim=0)
             data1 = torch.cat((data1, img1), dim=0)
-
-        # return data0, data1, should_get_same_class
-        # XXX：torch.from_numpy(np.array([int(img1_tuple[1]!=img0_tuple[1])],dtype=np.float32))
-        return data0, data1, torch.from_numpy(np.array([should_get_same_class ^ 1], dtype=np.float32))
         
+        # XXX: 注意should_get_same_class的值
+        return data0, data1, should_get_same_class ^ 1
 
     def att_face_data(self):
         ''' AT&T 数据集: 共40类, 每类十张图像 '''
@@ -229,7 +227,7 @@ def show_plot(x, y):
 
 if __name__ == '__main__':
     batch_size = 1 
-    data_num = 5      # 训练集总数
+    data_num = 600      # 训练集总数
     train_number_epochs = 100
 
     # net = SiameseNetwork().cuda()
@@ -243,60 +241,45 @@ if __name__ == '__main__':
     print(net)
 
     criterion = ContrastiveLoss()
-    optimizer = optim.Adam(net.parameters(),lr = 0.0005 )
+    # optimizer = optim.Adam(net.parameters(),lr = 0.0005 )
     
-    counter = []
+    # counter = []
     loss_history = [[],[]]
     iteration_number= 1     # 实验数据记录的步长
 
-    for epoch in range(0, train_number_epochs):
-        # 使用80%训练
-        ind_test = int(len(train_data.train_dataloader) * 0.8)
-        
-        # train
-        for i, data in enumerate(train_data.train_dataloader[0:ind_test]):
-            img0, img1, label = data
-            # img0 = im_aug1(img0)
-            # img1 = im_aug1(img1)
+    # 加载模型
+    net.load_state_dict(torch.load('net0313_params.pkl'))
+    net.eval()
 
-            # img0 = torch.unsqueeze(img0, dim=0).float()
-            # img1 = torch.unsqueeze(img1, dim=0).float()
-            # img0, img1 , label = Variable(img0).cuda(), Variable(img1).cuda() , Variable(label).cuda()
-            output1,output2 = net(img0,img1)
-            optimizer.zero_grad()
+    # train
+    match_err = [0,0]
+    for i, data in enumerate(train_data.train_dataloader):
+        img0, img1, label = data
 
-            loss_contrastive = criterion(output1,output2,label)
-            loss_contrastive.backward()
-            
-            # loss_contrastive.backward(torch.tensor([1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0]))
+        output1,output2 = net(img0,img1)
+        # optimizer.zero_grad()
+        loss_contrastive = criterion(output1, output2, label)
 
-            euclidean_distance = F.pairwise_distance(output1, output2)
-            optimizer.step()
-            if i % iteration_number == 0:
-                print("Epoch {}: step {}, label {}, loss {:.4f} ".format(epoch, i, label, loss_contrastive.data[0]),end='')
+        euclidean_distance = F.pairwise_distance(output1, output2)
+        if i % iteration_number == 0:
+            print("Step {}, label {}, loss {:.4f}".format(i, label, loss_contrastive.data[0]), end='')
+            print(', euclidean_distance {:.6f}'.format(euclidean_distance.cpu().data.numpy()[0]))
+            # 为后续图形化训练过程总结准备
+            # counter.append(iteration_number)
+            loss_history[label].append(loss_contrastive.data[0])
                 
-                print(', euclidean_distance {:.6f}'.format(euclidean_distance.cpu().data.numpy()[0]))
-                # 为后续图形化训练过程总结准备
-                counter.append(iteration_number)
-                loss_history[label].append(loss_contrastive.data[0])
-        
-        # test
-        val_loss = [0.0, 0.0]
-        num_test = [1, 1]
-        e_dis = [0.0, 0.0]
-        for i, data in enumerate(train_data.train_dataloader[ind_test:],start=1):
-            img0, img1, label = data
-            output1, output2 = net(img0, img1)
-            loss_contrastive = criterion(output1, output2, label)
-            
-            euclidean_distance = F.pairwise_distance(output1, output2)
+        if label == 0 and loss_contrastive.data[0] > 1.0 :
+            match_err[0] += 1
+        elif label == 1 and loss_contrastive.data[0] < 1.0 :
+            match_err[1] += 1
 
-            e_dis[label] += euclidean_distance.cpu().data.numpy()[0]
-            val_loss[label] += loss_contrastive.data[0]
-            num_test[label] += 1
-        
-        print("Epoch Test {}: label0 {}->{:.4f}, label1 {}->{:.4f}".format(epoch, num_test[0] - 1, val_loss[0] / num_test[0], num_test[1] - 1, val_loss[1] / num_test[1]), end='')
-        print("\t dis0 {:.4f}, dis1 {:.4f}".format(e_dis[0]/num_test[0], e_dis[1]/num_test[1]))
+        # if loss_contrastive.data[0] > 2.0:
+        #     plt.subplot(121)
+        #     plt.imshow((img0.squeeze(0)).permute(1, 2, 0))
+        #     plt.subplot(122)
+        #     plt.imshow((img1.squeeze(0)).permute(1, 2, 0))
+        #     plt.show()
 
-    # show_plot(counter, loss_history)
+    print(match_err)
+
     # show_plot(counter, loss_history)

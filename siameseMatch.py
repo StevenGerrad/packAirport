@@ -27,7 +27,6 @@ import torch.nn.functional as F
 
 import os
 
-
 image_width = 200
 image_height = 200
 
@@ -51,11 +50,11 @@ class SiameseNetwork(nn.Module):
             nn.Dropout2d(p=.2),
             # 输出为 8 * 200 * 200
 
-            # nn.ReflectionPad2d(1),
-            # nn.Conv2d(8, 8, kernel_size=3),
-            # nn.ReLU(inplace=True),
-            # nn.BatchNorm2d(8),
-            # nn.Dropout2d(p=.2),
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(8, 8, kernel_size=3),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(8),
+            nn.Dropout2d(p=.2),
 
             # 输出为 8 * 200 * 200
         )
@@ -63,9 +62,9 @@ class SiameseNetwork(nn.Module):
         self.fc1 = nn.Sequential(
             nn.Linear(8*image_width*image_height, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 128),
+            nn.Linear(512, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(128, 5)
+            nn.Linear(512, 5)
         )
 
     def forward_once(self, x):
@@ -87,14 +86,10 @@ class ContrastiveLoss(torch.nn.Module):
     """
     def __init__(self, margin=2.0):
         super(ContrastiveLoss, self).__init__()
-        # self.margin = torch.from_numpy(margin)
         self.margin = torch.tensor([margin])
 
     def forward(self, output1, output2, label):
         euclidean_distance = F.pairwise_distance(output1, output2)
-        # temp = self.margin - euclidean_distance
-        # loss_contrastive = torch.mean((1 - label) * torch.pow(euclidean_distance, 2)
-        #                             (label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
         loss_contrastive = ((1 - label) * torch.pow(euclidean_distance, 2)
                         + (label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))/2
         return loss_contrastive
@@ -112,8 +107,6 @@ class SiameseNetworkDataset():
 
         self.transform = tfs.Compose([
                             tfs.Resize((image_width,image_height)),
-                            # tfs.RandomHorizontalFlip(),
-                            # tfs.RandomCrop(128),
                             tfs.ToTensor()
                         ])
         self.should_invert = should_invert
@@ -130,7 +123,7 @@ class SiameseNetworkDataset():
         should_get_same_class = random.randint(0,1)
         for i in range(self.__batch_size__):
             img0_class = random.randint(0,class_num-1)
-            #we need to make sure approx 50% of images are in the same class
+            # we need to make sure approx 50% of images are in the same class
             
             if should_get_same_class:
                 item_num = len(self.imageFolderDataset[img0_class])
@@ -149,12 +142,6 @@ class SiameseNetworkDataset():
 
             img0 = Image.open(img0_tuple[0])
             img1 = Image.open(img1_tuple[0])
-            # 用以指定一种色彩模式, "L"8位像素，黑白
-            # img0 = img0.convert("L")
-            # img1 = img1.convert("L")
-
-            # img0 = img0.resize((100,100),Image.BILINEAR)
-            # img1 = img1.resize((100,100),Image.BILINEAR)
 
             if self.should_invert:
                 # 二值图像黑白反转,默认不采用
@@ -172,7 +159,7 @@ class SiameseNetworkDataset():
             data1 = torch.cat((data1, img1), dim=0)
         
         # XXX: 注意should_get_same_class的值
-        return data0, data1, should_get_same_class ^ 1
+        return data0, data1, torch.from_numpy(np.array([should_get_same_class ^ 1], dtype=np.float32))
     
     def classed_pack(self):
         local = 'image/classed_pack/2019-03-14 22-19-img/'
@@ -208,7 +195,7 @@ class SiameseNetworkDataset():
 class siamese_match():
     def __init__(self):
         self.net = SiameseNetwork()
-        self.net.load_state_dict(torch.load('net0313_params.pkl'))
+        self.net.load_state_dict(torch.load('net031402_params.pkl'))
         self.net.eval()
 
         self.image_width = 200
@@ -220,72 +207,59 @@ class siamese_match():
     
     def im_match(self, img0, img1):
         '''
-        传入数据为numpy类型: [height, width, channel]
+        传入数据: 为numpy类型: [height, width, channel]
+        返回数据: result(匹配为0, 不匹配为1), 误差(不匹配的误差大)
         '''
         img0 = self.transform(img0)
         img1 = self.transform(img1)
+        # 扩充维度, 3维 -> 4维
         img0 = torch.unsqueeze(img0, dim=0).float()
         img1 = torch.unsqueeze(img1, dim=0).float()
 
-        output1,output2 = net(img0,img1)
+        # 调整维度顺序
+        img0 = img0.permute(0, 2, 3, 1)
+        img1 = img1.permute(0, 2, 3, 1)
 
+        output1,output2 = self.net(img0,img1)
+        euclidean_distance = F.pairwise_distance(output1, output2)
 
-
+        # TODO: 这两个参数是根据下面的调试结果定的
+        if euclidean_distance < 1.0:
+            return 0, euclidean_distance.cpu().data.numpy()[0]
+        elif euclidean_distance >= 1.0:
+            return 1, euclidean_distance.cpu().data.numpy()[0]
 
 if __name__ == '__main__':
     batch_size = 1 
     data_num = 600      # 训练集总数
-    train_number_epochs = 100
 
-    # net = SiameseNetwork().cuda()
     print('start preparing the data...')
     train_data = SiameseNetworkDataset(set_size=data_num, batch_size=batch_size)
-    # train_data.att_face_data()
     train_data.classed_pack()
     print('finish preparing the data...')
 
-    net = SiameseNetwork()
-    # print(net)
-
     criterion = ContrastiveLoss()
-    # optimizer = optim.Adam(net.parameters(),lr = 0.0005 )
-    
-    # counter = []
-    loss_history = [[],[]]
-    iteration_number= 1     # 实验数据记录的步长
 
-    # 加载模型
-    net.load_state_dict(torch.load('net0313_params.pkl'))
-    net.eval()
+    # 测试接口
+    siaMatch = siamese_match()
 
-    # train
-    match_err = [0,0]
+    match_err = [0, 0]
+    e_dis = [[],[]]
     for i, data in enumerate(train_data.train_dataloader):
         img0, img1, label = data
+        label = int(label)
 
-        output1,output2 = net(img0,img1)
-        # optimizer.zero_grad()
-        loss_contrastive = criterion(output1, output2, label)
-
-        euclidean_distance = F.pairwise_distance(output1, output2)
-
-        if i % iteration_number == 0:
-            print("Step {}, label {}, loss {:.4f}".format(i, label, loss_contrastive.data[0]), end='')
-            print(', euclidean_distance {:.6f}'.format(euclidean_distance.cpu().data.numpy()[0]))
-            # 为后续图形化训练过程总结准备
-            # counter.append(iteration_number)
-            loss_history[label].append(loss_contrastive.data[0])
+        res, euclidean_distance = siaMatch.im_match(img0, img1)
+        print('Item {}, label {}->{}, euclidean_distance {:.6f}'.format(i, label, res, euclidean_distance))
+        e_dis[label].append(euclidean_distance)
         
-
-        # TODO: 训练后相同图像误差收敛于2.0, 不同图像
-        if label == 0 and loss_contrastive.data[0] > 1.0 :
-            match_err[0] += 1
-        elif label == 1 and loss_contrastive.data[0] < 1.0 :
-            match_err[1] += 1
+        # 统计判断错误个数
+        if label != res:
+            match_err[label] += 1
 
         '''
         # XXX:可以用来看看反常图像
-        if loss_contrastive.data[0] > 2.0:
+        if label != res:
             plt.subplot(121)
             plt.imshow((img0.squeeze(0)).permute(1, 2, 0))
             plt.subplot(122)
@@ -293,6 +267,20 @@ if __name__ == '__main__':
             plt.show()
         '''
 
-    print(match_err)
+    print('error numbers for label 0 and 1: ',match_err)
 
-    # show_plot(counter, loss_history)
+    # 查看分布的四分位数
+    temp = np.percentile(e_dis[0], (75,80,85,90,95,97), interpolation='midpoint')
+    print('label 0 quartile:', temp)
+    temp = np.percentile(e_dis[1], (3,5,10,15,20,25), interpolation='midpoint')
+    print('label 1 quartile:', temp)
+
+    # 查看分布图
+    plt.subplot(121)
+    plt.hist(x=e_dis[0], bins='auto',density=True)
+    plt.subplot(122)
+    plt.hist(x=e_dis[1], bins='auto',density=True)
+    plt.show()
+    
+    
+

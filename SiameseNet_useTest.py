@@ -51,11 +51,11 @@ class SiameseNetwork(nn.Module):
             nn.Dropout2d(p=.2),
             # 输出为 8 * 100 * 100
 
-            # nn.ReflectionPad2d(1),
-            # nn.Conv2d(8, 8, kernel_size=3),
-            # nn.ReLU(inplace=True),
-            # nn.BatchNorm2d(8),
-            # nn.Dropout2d(p=.2),
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(8, 8, kernel_size=3),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(8),
+            nn.Dropout2d(p=.2),
 
             # 输出为 8 * 100 * 100
         )
@@ -64,9 +64,9 @@ class SiameseNetwork(nn.Module):
             # nn.Linear(8*100*100, 500),
             nn.Linear(8*image_width*image_height, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 128),
+            nn.Linear(512, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(128, 5)
+            nn.Linear(512, 5)
         )
 
     def forward_once(self, x):
@@ -248,7 +248,7 @@ if __name__ == '__main__':
     iteration_number= 1     # 实验数据记录的步长
 
     # 加载模型
-    net.load_state_dict(torch.load('net0313_params.pkl'))
+    net.load_state_dict(torch.load('net031401_params.pkl'))
     net.eval()
 
     # train
@@ -268,9 +268,9 @@ if __name__ == '__main__':
             # counter.append(iteration_number)
             loss_history[label].append(loss_contrastive.data[0])
                 
-        if label == 0 and loss_contrastive.data[0] > 1.0 :
+        if label == 0 and euclidean_distance > 1.0 :
             match_err[0] += 1
-        elif label == 1 and loss_contrastive.data[0] < 1.0 :
+        elif label == 1 and euclidean_distance < 1.0 :
             match_err[1] += 1
 
         # if loss_contrastive.data[0] > 2.0:

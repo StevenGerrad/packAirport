@@ -18,6 +18,8 @@ from PIL import Image
 from torchvision import transforms as tfs
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator, FormatStrFormatter
+
 import random
 
 import torch
@@ -120,7 +122,11 @@ class SiameseNetworkDataset():
         data0 = torch.empty(0, 3, image_width, image_height)
         data1 = torch.empty(0, 3, image_width, image_height)
 
-        should_get_same_class = random.randint(0,1)
+        # should_get_same_class = random.randint(0,1)
+        should_get_same_class = int(0)
+        if random.random() <= 0.4:
+            should_get_same_class = int(1)
+        
         for i in range(self.__batch_size__):
             img0_class = random.randint(0,class_num-1)
             # we need to make sure approx 50% of images are in the same class
@@ -131,10 +137,12 @@ class SiameseNetworkDataset():
                 img0_tuple = (self.imageFolderDataset[img0_class][temp[0]], img0_class)
                 img1_tuple = (self.imageFolderDataset[img0_class][temp[1]], img0_class)
             else:
-                img1_class = random.randint(0, class_num - 1)
+                # img1_class = random.randint(0, class_num - 1)
+                img1_class = min(max(round(random.normalvariate(img0_class, 5)), 0),class_num-1)
                 # 保证属于不同类别
                 while img1_class == img0_class:
-                    img1_class = random.randint(0, class_num - 1)
+                    # img1_class = random.randint(0, class_num - 1)
+                    img1_class = min(max(round(random.normalvariate(img0_class, 5)), 0),class_num-1)
                 item_num = len(self.imageFolderDataset[img0_class])
                 img0_tuple = (self.imageFolderDataset[img0_class][random.randint(0, item_num - 1)], img0_class)
                 item_num = len(self.imageFolderDataset[img1_class])
@@ -162,28 +170,23 @@ class SiameseNetworkDataset():
         return data0, data1, torch.from_numpy(np.array([should_get_same_class ^ 1], dtype=np.float32))
     
     def classed_pack(self):
-        local = 'image/classed_pack/2019-03-14 22-19-img/'
-        local1 = 'image/classed_pack/2019-03-14 16-30-img/'
+        # local = ['image/real_classed_pack/2019-03-14 22-19/',
+                #  'image/real_classed_pack/2019-03-14 16-30/',
+                #  'image/real_classed_pack/2019-03-14 23-33/']
+        local = ['image/real_classed_pack/2019-03-14 23-33/']
         self.imageFolderDataset = []
 
         # floader1
-        subFloader = os.listdir(local)
-        for i in subFloader:
-            temp = []
-            sub_dir = local + i + '/'
-            subsubFloader = os.listdir(sub_dir)
-            for j in subsubFloader:
-                temp.append(sub_dir + j)
-            self.imageFolderDataset.append(temp)
-        # floader2
-        subFloader = os.listdir(local1)
-        for i in subFloader:
-            temp = []
-            sub_dir = local + i + '/'
-            subsubFloader = os.listdir(sub_dir)
-            for j in subsubFloader:
-                temp.append(sub_dir + j)
-            self.imageFolderDataset.append(temp)
+        for local_i in local:
+            subFloader = os.listdir(local_i)
+            subFloader.sort(key= lambda x:int(x))
+            for i in subFloader:
+                temp = []
+                sub_dir = local_i + i + '/'
+                subsubFloader = os.listdir(sub_dir)
+                for j in subsubFloader:
+                    temp.append(sub_dir + j)
+                self.imageFolderDataset.append(temp)
 
         # 为数据集添加数据
         for i in range(self.__set_size__):
@@ -195,7 +198,7 @@ class SiameseNetworkDataset():
 class siamese_match():
     def __init__(self):
         self.net = SiameseNetwork()
-        self.net.load_state_dict(torch.load('net031402_params.pkl'))
+        self.net.load_state_dict(torch.load('net032303_data_alter.pkl'))
         self.net.eval()
 
         self.image_width = 200
@@ -210,6 +213,7 @@ class siamese_match():
         传入数据: 为numpy类型: [height, width, channel]
         返回数据: result(匹配为0, 不匹配为1), 误差(不匹配的误差大)
         '''
+        '''
         img0 = self.transform(img0)
         img1 = self.transform(img1)
         # 扩充维度, 3维 -> 4维
@@ -219,6 +223,7 @@ class siamese_match():
         # 调整维度顺序
         img0 = img0.permute(0, 2, 3, 1)
         img1 = img1.permute(0, 2, 3, 1)
+        '''
 
         output1,output2 = self.net(img0,img1)
         euclidean_distance = F.pairwise_distance(output1, output2)
@@ -231,7 +236,7 @@ class siamese_match():
 
 if __name__ == '__main__':
     batch_size = 1 
-    data_num = 600      # 训练集总数
+    data_num = 400      # 训练集总数
 
     print('start preparing the data...')
     train_data = SiameseNetworkDataset(set_size=data_num, batch_size=batch_size)
@@ -244,7 +249,8 @@ if __name__ == '__main__':
     siaMatch = siamese_match()
 
     match_err = [0, 0]
-    e_dis = [[],[]]
+    e_dis = [[], []]
+
     for i, data in enumerate(train_data.train_dataloader):
         img0, img1, label = data
         label = int(label)
@@ -276,10 +282,8 @@ if __name__ == '__main__':
     print('label 1 quartile:', temp)
 
     # 查看分布图
-    plt.subplot(121)
-    plt.hist(x=e_dis[0], bins='auto',density=True)
-    plt.subplot(122)
-    plt.hist(x=e_dis[1], bins='auto',density=True)
+    plt.hist(x=e_dis[0], bins=50, alpha=0.5)
+    plt.hist(x=e_dis[1], bins=50, alpha=0.5)
     plt.show()
     
     

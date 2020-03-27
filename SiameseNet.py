@@ -196,10 +196,12 @@ class SiameseNetworkDataset():
     def classed_pack(self):
         local = 'image/classed_pack/2019-03-14 22-19-img/'
         local1 = 'image/classed_pack/2019-03-14 16-30-img/'
+        local2 = 'image/classed_pack/2019-03-15 13-10-img/'
         self.imageFolderDataset = []
 
         # floader1
         subFloader = os.listdir(local)
+        subFloader.sort(key= lambda x:int(x))
         for i in subFloader:
             temp = []
             sub_dir = local + i + '/'
@@ -211,7 +213,16 @@ class SiameseNetworkDataset():
         subFloader = os.listdir(local1)
         for i in subFloader:
             temp = []
-            sub_dir = local + i + '/'
+            sub_dir = local1 + i + '/'
+            subsubFloader = os.listdir(sub_dir)
+            for j in subsubFloader:
+                temp.append(sub_dir + j)
+            self.imageFolderDataset.append(temp)
+        # floader3
+        subFloader = os.listdir(local2)
+        for i in subFloader:
+            temp = []
+            sub_dir = local2 + i + '/'
             subsubFloader = os.listdir(sub_dir)
             for j in subsubFloader:
                 temp.append(sub_dir + j)
@@ -230,9 +241,8 @@ def show_plot(x, y):
 if __name__ == '__main__':
     batch_size = 1 
     data_num = 5      # 训练集总数
-    train_number_epochs = 100
+    train_number_epochs = 10
 
-    # net = SiameseNetwork().cuda()
     print('start preparing the data...')
     train_data = SiameseNetworkDataset(set_size=data_num, batch_size=batch_size)
     # train_data.att_face_data()
@@ -272,9 +282,12 @@ if __name__ == '__main__':
 
             euclidean_distance = F.pairwise_distance(output1, output2)
             optimizer.step()
+            label = int(label)
             if i % iteration_number == 0:
                 print("Epoch {}: step {}, label {}, loss {:.4f} ".format(epoch, i, label, loss_contrastive.data[0]),end='')
                 
+                if (label == 0 and euclidean_distance >= 1.0) or (label == 1 and euclidean_distance <= 1.0):
+                    print('------',end='')
                 print(', euclidean_distance {:.6f}'.format(euclidean_distance.cpu().data.numpy()[0]))
                 # 为后续图形化训练过程总结准备
                 counter.append(iteration_number)
@@ -283,20 +296,28 @@ if __name__ == '__main__':
         # test
         val_loss = [0.0, 0.0]
         num_test = [1, 1]
-        e_dis = [0.0, 0.0]
+        e_dis = [[],[]]
+        match_err = [0, 0]
         for i, data in enumerate(train_data.train_dataloader[ind_test:],start=1):
             img0, img1, label = data
             output1, output2 = net(img0, img1)
             loss_contrastive = criterion(output1, output2, label)
-            
             euclidean_distance = F.pairwise_distance(output1, output2)
 
-            e_dis[label] += euclidean_distance.cpu().data.numpy()[0]
+            euclidean_distance = euclidean_distance.cpu().data.numpy()[0]
+
+            # 统计
+            label = int(label)
+            e_dis[label].append(euclidean_distance)
             val_loss[label] += loss_contrastive.data[0]
             num_test[label] += 1
-        
-        print("Epoch Test {}: label0 {}->{:.4f}, label1 {}->{:.4f}".format(epoch, num_test[0] - 1, val_loss[0] / num_test[0], num_test[1] - 1, val_loss[1] / num_test[1]), end='')
-        print("\t dis0 {:.4f}, dis1 {:.4f}".format(e_dis[0]/num_test[0], e_dis[1]/num_test[1]))
+            if (label == 0 and euclidean_distance >= 1.0) or (label == 1 and euclidean_distance <= 1.0):
+                match_err[label] += 1
+            
+        print("Epoch Test {}: label0 {}->{:.4f}, label1 {}->{:.4f}".format(epoch, num_test[0] - 1, val_loss[0] / num_test[0], num_test[1] - 1, val_loss[1] / num_test[1]))
+        temp = np.percentile(e_dis[0], (75,78,80,82,85,90,95,97), interpolation='midpoint')
+        print('label 0 quartile:', temp)
+        temp = np.percentile(e_dis[1], (3,5,10,15,18,20,22,25), interpolation='midpoint')
+        print('label 1 quartile:', temp)
 
-    # show_plot(counter, loss_history)
-    # show_plot(counter, loss_history)
+    # show_plot(counter, loss_history) 

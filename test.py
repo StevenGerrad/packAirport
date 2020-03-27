@@ -40,9 +40,7 @@ if __name__ == '__main__':
 
     max_iter = 10
     dictionary = dic
-    
     tolerance = 1e-6
-
     for i in range(max_iter):
         # 稀疏编码
         x = linear_model.orthogonal_mp(dictionary, y)
@@ -55,10 +53,9 @@ if __name__ == '__main__':
         dictionary,_ = dict_update(y, dictionary, x, n_comp)
 
     sparsecode = linear_model.orthogonal_mp(dictionary, y)
-
     print(sparsecode)
-
 '''
+
 '''
 
 
@@ -107,6 +104,8 @@ for i in filelist:
         os.rename(j[0], l[0]+'\\'+l[1]+'\\'+str(index+1)+'.jpg')
         # print()
     # print list[i],' 最近修改时间是: ',date.strftime('%Y-%m-%d %H:%M:%S')
+
+'''
 
 '''
 
@@ -238,3 +237,13 @@ plt.show()
 
 
 
+'''
+import random
+import matplotlib.pyplot as plt
+
+l = []
+for i in range(1000):
+    l.append(random.normalvariate(2, 10))
+
+plt.hist(l, bins='auto')
+plt.show()
